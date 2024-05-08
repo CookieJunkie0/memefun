@@ -38,9 +38,9 @@ class Account {
         return this;
     }
 
-    async getPosts() {
+    async getPosts(room) {
         try {
-            const posts = await this.body.get("https://api.meme.fun/ticker/0x38536cf7f2018ca83fd8728d141aa34a8b7d9aaf637ec895f28e59b478f1436e/posts?sort=recent");
+            const posts = await this.body.get(`https://api.meme.fun/ticker/${room}/posts?sort=recent`);
             const filteredPosts = posts.data.posts.filter(post => post.user.id !== this.id && !post.userVote);
     
             if(filteredPosts.length === 0) return {success: false, err: "No posts found"};
@@ -48,19 +48,38 @@ class Account {
         } catch(e) {return {success: false, err: e}}
     }
 
-    async like(post) {
+    async like(room, post) {
         try {
-            const response = await this.body.post(`https://api.meme.fun/ticker/0x38536cf7f2018ca83fd8728d141aa34a8b7d9aaf637ec895f28e59b478f1436e/post/${post.id}/vote`, {upvote: true});
+            const response = await this.body.post(`https://api.meme.fun/ticker/${room}/post/${post.id}/vote`, {upvote: true});
     
             return {success: true, response: response.data};
         } catch(e) {return {success: false, err: e}}
     }
 
-    async postPicture(image) {
+    async playGame(room) {
+        try {
+            const startGame = await this.body.get(`https://api.meme.fun/points/${room}/wheel`);
+            const spin = await this.body.post(`https://api.meme.fun/points/${room}/wheel/spin`);
+
+            logger.info(`${this.username} | Played game and won ${spin.data.pointsWon}!`);
+
+            return {success: true, response: spin.data};
+        } catch(e) {return {success: false, err: e}}
+    }
+
+    async getRooms() {
+        try {
+            const response = await this.body.get("https://api.meme.fun/user/me");
+
+            return {success: true, rooms: response.data.portfolio};
+        } catch(e) {return {success: false, err: e}}
+    }
+
+    async postPicture(room, image) {
         try {
             const formData = new FormData();
             formData.append("file", image.image);
-            const resp = await this.body.post("https://api.meme.fun/ticker/0x38536cf7f2018ca83fd8728d141aa34a8b7d9aaf637ec895f28e59b478f1436e/post", formData, {
+            const resp = await this.body.post(`https://api.meme.fun/ticker/${room}/post`, formData, {
                 headers: {"Content-Type": "multipart/form-data", ...formData.getHeaders()},
             });
     
@@ -152,27 +171,41 @@ async function startCycle(accounts) {
                 const token = await account.checkToken();
                 if(!token.success) {logger.warn(`${account.username} | Failed to check token`); continue};
 
-                const image = getImage();
-                if(!image.success) {logger.warn(`${account.username} | Failed to get image`); continue};
-                
-                const post = await account.postPicture(image);
-                if(!post.success) {logger.warn(`${account.username} | Failed to post picture`); continue};
-                logger.info(`${account.username} | Posted ${image.filename}`);
-                await logger.setTimer(getRandomInt(ACTION_DELAY[0], ACTION_DELAY[1]), "until next action.");
-                
-                const posts = await account.getPosts();
-                if(!posts.success) {logger.warn(`${account.username} | Failed to get posts`); continue};
-                logger.info(`${account.username} | Starting to like ${posts.posts.length} posts...`)
+                const rooms = await account.getRooms();
+                if(!rooms.success) {logger.warn(`${account.username} | Failed to get rooms`); continue};
 
-                for(const post of posts.posts) {
+                for(let room of rooms.rooms) {
+                    const id = room.ticker.id;
+                    if(room.canPlayGame == true) {
+                        const game = await account.playGame(id);
+                        if(!game.success) logger.warn(`${account.username} | Failed to play game in ${id}`);
+                        logger.info(`${account.username} | Played game in ${id}`);
+                    }
+
+                    const image = getImage();
+                    if(!image.success) {logger.warn(`${account.username} | Failed to get image`); continue};
+                    
+                    const post = await account.postPicture(id, image);
+                    if(!post.success) {logger.warn(`${account.username} | Failed to post picture`); continue};
+                    logger.info(`${account.username} | Posted ${image.filename}`);
                     await logger.setTimer(getRandomInt(ACTION_DELAY[0], ACTION_DELAY[1]), "until next action.");
-                    const like = await account.like(post);
-                    if(!like.success) logger.warn(`${account.username} | Failed to like post by ${post.user.username}`);
-                    logger.info(`${account.username} | Liked post by ${post.user.username}`);
+                    
+                    const posts = await account.getPosts(id);
+                    if(!posts.success) {logger.warn(`${account.username} | Failed to get posts`); continue};
+                    logger.info(`${account.username} | Starting to like ${posts.posts.length} posts...`)
+
+                    for(const post of posts.posts) {
+                        await logger.setTimer(getRandomInt(ACTION_DELAY[0], ACTION_DELAY[1]), "until next action.");
+                        const like = await account.like(id, post);
+                        if(!like.success) logger.warn(`${account.username} | Failed to like post by ${post.user.username}`);
+                        logger.info(`${account.username} | Liked post by ${post.user.username}`);
+                    }
+
+                    logger.success(`${account.username} | Finished cycle #${i}.`);
+                    await logger.setTimer(getRandomInt(ACCOUNT_DELAY[0], ACCOUNT_DELAY[1]), "until next account.");
                 }
 
-                logger.success(`${account.username} | Finished cycle #${i}.`);
-                await logger.setTimer(getRandomInt(ACCOUNT_DELAY[0], ACCOUNT_DELAY[1]), "until next account.");
+                
             }
             logger.info(`Finished cycle #${i}`);
             await logger.setTimer(getRandomInt(CYCLE_DELAY[0], CYCLE_DELAY[1]), 'until next cycle...')
