@@ -59,7 +59,7 @@ class Account {
     async playGame(room) {
         try {
             const startGame = await this.body.get(`https://api.meme.fun/points/${room}/wheel`);
-            const spin = await this.body.post(`https://api.meme.fun/points/${room}/wheel/spin`);
+            const spin = await this.body.post(`https://api.meme.fun/points/${room}/wheel/spin`, {});
 
             logger.info(`${this.username} | Played game and won ${spin.data.pointsWon}!`);
 
